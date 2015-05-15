@@ -3,6 +3,7 @@
 
 import {bootstrap} from "angular2/angular2";
 import {KanbanApp} from "my_app_component";
+import {MdDialog} from "dialog";
 
 bootstrap(KanbanApp);
 

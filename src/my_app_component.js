@@ -14,9 +14,11 @@ if (typeof __metadata !== "function") __metadata = function (k, v) {
 var angular2_1 = require("angular2/angular2");
 var di_1 = require("angular2/di");
 var immutable_1 = require("immutable");
-var ItemRecord = immutable_1.Record({ text: null, columnId: null });
-function item(text, columnId) {
-    return new ItemRecord({ text: text, columnId: columnId });
+var dialog_1 = require("dialog");
+var ItemRecord = immutable_1.Record({ text: null, columnId: null, isTemp: null });
+function item(text, columnId, isTemp) {
+    if (isTemp === void 0) { isTemp = false; }
+    return new ItemRecord({ text: text, columnId: columnId, isTemp: isTemp });
 }
 var ColumnRecord = immutable_1.Record({ id: null, name: null, items: null });
 function column(id, name, items) {
@@ -29,6 +31,8 @@ var BoardStore = (function () {
     BoardStore.prototype.removeItem = function (item) {
         var columnIndex = this.columns.findIndex(function (c) { return c.id === item.columnId; });
         var itemIndex = this.columns.get(columnIndex).items.indexOf(item);
+        if (itemIndex == -1)
+            throw "tried to remove and item with text " + item.text + " and columnId " + item.columnId;
         this.columns = this.columns.removeIn([columnIndex, 'items', itemIndex]);
     };
     BoardStore.prototype.moveItem = function (item, destinationColumnId, insertAfter) {
@@ -38,10 +42,18 @@ var BoardStore = (function () {
         this.removeItem(item);
         this.addItem(item, destinationColumnId, index);
     };
+    BoardStore.prototype.addAfter = function (item, destinationColumnId, addAfter) {
+        var targetColumn = this.columns.filter(function (c) { return c.id === destinationColumnId; }).first();
+        var index = addAfter === null ? targetColumn.items.size : targetColumn.items.indexOf(addAfter);
+        this.addItem(item, destinationColumnId, index);
+    };
     BoardStore.prototype.addItem = function (item, destinationColumnId, index) {
-        var columnIndex = this.columns.findIndex(function (c) { return c.id === destinationColumnId; });
+        var columnIndex = this.columnIdToIdx(destinationColumnId);
         var newItem = item.setIn(['columnId'], destinationColumnId);
         this.columns = this.columns.updateIn([columnIndex, 'items'], function (items) { return items.splice(index, 0, newItem); });
+    };
+    BoardStore.prototype.columnIdToIdx = function (id) {
+        return this.columns.findIndex(function (c) { return c.id === id; });
     };
     return BoardStore;
 })();
@@ -52,6 +64,9 @@ var ItemActions = (function () {
     ItemActions.prototype.removeItem = function (item) { this.board.removeItem(item); };
     ItemActions.prototype.moveItem = function (item, destinationColumndId, insertAfter) {
         this.board.moveItem(item, destinationColumndId, insertAfter);
+    };
+    ItemActions.prototype.addItemAfter = function (item, destinationColumnId, addAfter) {
+        this.board.addAfter(item, destinationColumnId, addAfter);
     };
     ItemActions = __decorate([
         di_1.Injectable(), 
@@ -65,21 +80,28 @@ var DragService = (function () {
         this._draggingItem = null;
         this._draggingOver = null;
         this._draggingOverColumn = null;
+        this._tempEl = null;
     }
     DragService.prototype.setDragging = function (item) {
         this._draggingItem = item;
     };
-    DragService.prototype.dragOver = function (columnId, item) {
-        console.log('over', columnId, item);
-        if (this._draggingItem == null) {
+    DragService.prototype.dragOver = function (columnId, overItem) {
+        console.log('over', columnId, overItem);
+        if (this._draggingItem == null || this._tempEl == overItem) {
             return;
         }
-        this._draggingOver = item;
+        this._draggingOver = overItem;
         this._draggingOverColumn = columnId;
+        if (this._tempEl)
+            this.actions.removeItem(this._tempEl);
+        this._tempEl = item(this._draggingItem.text, columnId, true);
+        this.actions.addItemAfter(this._tempEl, this._draggingOverColumn, this._draggingOver);
     };
     DragService.prototype.dragEnd = function () {
         if (this._draggingItem == null || this._draggingOverColumn == null)
             return;
+        this.actions.removeItem(this._tempEl);
+        this._tempEl = null;
         this.actions.moveItem(this._draggingItem, this._draggingOverColumn, this._draggingOver);
         this._draggingItem = null;
         this._draggingOver = null;
@@ -91,10 +113,30 @@ var DragService = (function () {
     ], DragService);
     return DragService;
 })();
-var ItemCmp = (function () {
-    function ItemCmp(actions) {
-        this.actions = actions;
+var EditItemCmp = (function () {
+    function EditItemCmp() {
     }
+    EditItemCmp = __decorate([
+        angular2_1.Component({
+            selector: 'edit-item-cmp'
+        }),
+        angular2_1.View({
+            template: "hello"
+        }), 
+        __metadata('design:paramtypes', [])
+    ], EditItemCmp);
+    return EditItemCmp;
+})();
+var ItemCmp = (function () {
+    function ItemCmp(actions, mdDialog, el, inj) {
+        this.actions = actions;
+        this.mdDialog = mdDialog;
+        this.el = el;
+        this.inj = inj;
+    }
+    ItemCmp.prototype.edit = function () {
+        this.mdDialog.open(EditItemCmp, this.el, this.inj);
+    };
     ItemCmp.prototype.remove = function () { this.actions.removeItem(this.item); };
     ItemCmp = __decorate([
         angular2_1.Component({
@@ -105,9 +147,9 @@ var ItemCmp = (function () {
             }
         }),
         angular2_1.View({
-            template: "\n    Item: {{item.text}}\n    <button (click)=\"remove()\">x</button>\n  "
+            template: "\n    Item: {{item.text}}\n    <button (click)=\"remove()\">x</button>\n    <button (click)=\"edit()\">Edit</button>\n   "
         }), 
-        __metadata('design:paramtypes', [ItemActions])
+        __metadata('design:paramtypes', [ItemActions, dialog_1.MdDialog, angular2_1.ElementRef, di_1.Injector])
     ], ItemCmp);
     return ItemCmp;
 })();
@@ -129,7 +171,7 @@ var ColumnCmp = (function () {
         }),
         angular2_1.View({
             directives: [angular2_1.coreDirectives, ItemCmp],
-            template: "\n    <h1>{{column.name}}</h1>\n    <item *ng-for=\"#i of column.items\" [item]=\"i\" draggable=\"true\"\n       (dragstart)=\"drag.setDragging(i)\" (dragend)=\"drag.dragEnd()\" (dragover)=\"drag.dragOver(column.id, i)\"></item>\n  "
+            template: "\n    <h1>{{column.name}}</h1>\n    <item *ng-for=\"#i of column.items\" [item]=\"i\" draggable=\"true\"\n       (dragstart)=\"drag.setDragging(i)\" (dragend)=\"drag.dragEnd()\" (dragover)=\"drag.dragOver(column.id, i)\"\n       [class.temp]=\"i.isTemp\"></item>\n  "
         }), 
         __metadata('design:paramtypes', [DragService])
     ], ColumnCmp);
@@ -164,7 +206,7 @@ var KanbanApp = (function () {
     KanbanApp = __decorate([
         angular2_1.Component({
             selector: 'my-app',
-            injectables: [BoardStore, ItemActions, DragService]
+            injectables: [BoardStore, ItemActions, DragService, dialog_1.MdDialog]
         }),
         angular2_1.View({
             directives: [BoardCmp],
