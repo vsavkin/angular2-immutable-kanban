@@ -3,9 +3,9 @@
 
 import {Component, View, ON_PUSH, coreDirectives} from "angular2/angular2";
 import {Injectable} from "angular2/di";
-import {List, Record} from "immutable";
+import {List, Record, Map} from "immutable";
 
-interface Item {
+interface Item extends Map<string, any> {
   text:string
   columnId:number;
 }
@@ -55,9 +55,11 @@ class BoardStore {
   
   private addItem(item: Item, destinationColumnId: number, index: number) {
     const columnIndex = this.columns.findIndex(c => c.id === destinationColumnId);
-    this.columns = this.columns.updateIn([columnIndex, 'items'], items => items.splice(index, 0, item));
+    const newItem = item.setIn(['columnId'], destinationColumnId);
+    this.columns = this.columns.updateIn([columnIndex, 'items'], items => items.splice(index, 0, newItem));
   }
 }
+
 
 @Injectable()
 class ItemActions {
@@ -69,7 +71,35 @@ class ItemActions {
   }
 }
 
-
+@Injectable()
+class DragService {
+  _draggingItem: Item = null;
+  _draggingOver: Item = null;
+  _draggingOverColumn: number = null;
+  constructor(public actions: ItemActions) {}
+  
+  setDragging(item: Item) {
+    //console.log(item);
+    this._draggingItem = item;
+  }
+  
+  dragOver(columnId: number, item: Item) {
+    console.log('over', columnId, item);
+    if (this._draggingItem == null) {
+      return;
+    }
+    this._draggingOver = item;
+    this._draggingOverColumn = columnId;
+  }
+  
+  dragEnd() {
+    if (this._draggingItem == null || this._draggingOverColumn == null) return;
+    this.actions.moveItem(this._draggingItem, this._draggingOverColumn, this._draggingOver);
+    this._draggingItem = null;
+    this._draggingOver = null;
+    this._draggingOverColumn = null;
+  }
+} 
 
 @Component({
   selector: 'item',
@@ -82,7 +112,6 @@ class ItemActions {
   template: `
     Item: {{item.text}}
     <button (click)="remove()">x</button>
-    <button (click)="move()">Move</button>
   `
 })
 export class ItemCmp {
@@ -90,7 +119,7 @@ export class ItemCmp {
   constructor(public actions:ItemActions){}
   
   remove() { this.actions.removeItem(this.item); }
-  move() { this.actions.moveItem(this.item, 1, null); }
+  // move() { this.actions.moveItem(this.item, 1, null); }
 }
 
 @Component({
@@ -98,17 +127,22 @@ export class ItemCmp {
   changeDetection: ON_PUSH,
   properties: {
     column: 'column'
+  },
+  hostListeners: {
+    dragover: 'drag.dragOver(column.id, null)' 
   }
 })
 @View({
   directives: [coreDirectives, ItemCmp] ,
   template: `
     <h1>{{column.name}}</h1>
-    <item *ng-for="#i of column.items" [item]="i"></item>
+    <item *ng-for="#i of column.items" [item]="i" draggable="true"
+       (dragstart)="drag.setDragging(i)" (dragend)="drag.dragEnd()" (dragover)="drag.dragOver(column.id, i)"></item>
   `
 })
 export class ColumnCmp {
   column: Column;
+  constructor(public drag: DragService) {}
 }
 
 @Component({
@@ -131,7 +165,7 @@ export class BoardCmp {
 
 @Component({
   selector: 'my-app',
-  injectables: [BoardStore, ItemActions]
+  injectables: [BoardStore, ItemActions, DragService]
 })
 @View({
   directives: [BoardCmp],

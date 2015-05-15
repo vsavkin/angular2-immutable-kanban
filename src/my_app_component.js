@@ -40,7 +40,8 @@ var BoardStore = (function () {
     };
     BoardStore.prototype.addItem = function (item, destinationColumnId, index) {
         var columnIndex = this.columns.findIndex(function (c) { return c.id === destinationColumnId; });
-        this.columns = this.columns.updateIn([columnIndex, 'items'], function (items) { return items.splice(index, 0, item); });
+        var newItem = item.setIn(['columnId'], destinationColumnId);
+        this.columns = this.columns.updateIn([columnIndex, 'items'], function (items) { return items.splice(index, 0, newItem); });
     };
     return BoardStore;
 })();
@@ -58,12 +59,43 @@ var ItemActions = (function () {
     ], ItemActions);
     return ItemActions;
 })();
+var DragService = (function () {
+    function DragService(actions) {
+        this.actions = actions;
+        this._draggingItem = null;
+        this._draggingOver = null;
+        this._draggingOverColumn = null;
+    }
+    DragService.prototype.setDragging = function (item) {
+        this._draggingItem = item;
+    };
+    DragService.prototype.dragOver = function (columnId, item) {
+        console.log('over', columnId, item);
+        if (this._draggingItem == null) {
+            return;
+        }
+        this._draggingOver = item;
+        this._draggingOverColumn = columnId;
+    };
+    DragService.prototype.dragEnd = function () {
+        if (this._draggingItem == null || this._draggingOverColumn == null)
+            return;
+        this.actions.moveItem(this._draggingItem, this._draggingOverColumn, this._draggingOver);
+        this._draggingItem = null;
+        this._draggingOver = null;
+        this._draggingOverColumn = null;
+    };
+    DragService = __decorate([
+        di_1.Injectable(), 
+        __metadata('design:paramtypes', [ItemActions])
+    ], DragService);
+    return DragService;
+})();
 var ItemCmp = (function () {
     function ItemCmp(actions) {
         this.actions = actions;
     }
     ItemCmp.prototype.remove = function () { this.actions.removeItem(this.item); };
-    ItemCmp.prototype.move = function () { this.actions.moveItem(this.item, 1, null); };
     ItemCmp = __decorate([
         angular2_1.Component({
             selector: 'item',
@@ -73,7 +105,7 @@ var ItemCmp = (function () {
             }
         }),
         angular2_1.View({
-            template: "\n    Item: {{item.text}}\n    <button (click)=\"remove()\">x</button>\n    <button (click)=\"move()\">Move</button>\n  "
+            template: "\n    Item: {{item.text}}\n    <button (click)=\"remove()\">x</button>\n  "
         }), 
         __metadata('design:paramtypes', [ItemActions])
     ], ItemCmp);
@@ -81,7 +113,8 @@ var ItemCmp = (function () {
 })();
 exports.ItemCmp = ItemCmp;
 var ColumnCmp = (function () {
-    function ColumnCmp() {
+    function ColumnCmp(drag) {
+        this.drag = drag;
     }
     ColumnCmp = __decorate([
         angular2_1.Component({
@@ -89,13 +122,16 @@ var ColumnCmp = (function () {
             changeDetection: angular2_1.ON_PUSH,
             properties: {
                 column: 'column'
+            },
+            hostListeners: {
+                dragover: 'drag.dragOver(column.id, null)'
             }
         }),
         angular2_1.View({
             directives: [angular2_1.coreDirectives, ItemCmp],
-            template: "\n    <h1>{{column.name}}</h1>\n    <item *ng-for=\"#i of column.items\" [item]=\"i\"></item>\n  "
+            template: "\n    <h1>{{column.name}}</h1>\n    <item *ng-for=\"#i of column.items\" [item]=\"i\" draggable=\"true\"\n       (dragstart)=\"drag.setDragging(i)\" (dragend)=\"drag.dragEnd()\" (dragover)=\"drag.dragOver(column.id, i)\"></item>\n  "
         }), 
-        __metadata('design:paramtypes', [])
+        __metadata('design:paramtypes', [DragService])
     ], ColumnCmp);
     return ColumnCmp;
 })();
@@ -128,7 +164,7 @@ var KanbanApp = (function () {
     KanbanApp = __decorate([
         angular2_1.Component({
             selector: 'my-app',
-            injectables: [BoardStore, ItemActions]
+            injectables: [BoardStore, ItemActions, DragService]
         }),
         angular2_1.View({
             directives: [BoardCmp],
